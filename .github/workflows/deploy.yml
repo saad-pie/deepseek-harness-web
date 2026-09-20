@@ -36,13 +36,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
-      - name: Build monorepo with base URL subpath
+      - name: Build static web bundle
         env:
           BASE_URL: /deepseek-harness-web/
           PUBLIC_URL: /deepseek-harness-web/
           VITE_BASE_URL: /deepseek-harness-web/
         run: |
           pnpm run build
+          # Build the static web app assets explicitly
+          pnpm --filter @deepseek-ai/dsh-web run build || pnpm --filter web run build || pnpm run build:web
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
