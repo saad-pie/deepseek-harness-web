@@ -22,7 +22,7 @@ jobs:
       - name: Clone DeepSeek Harness
         run: |
           git clone https://github.com/deepseek-ai/deepseek-harness.git .
-          
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -36,21 +36,23 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
-      - name: Build project for GitHub Pages
+      - name: Build monorepo libraries & web app
         env:
           BASE_URL: /deepseek-harness-web/
-          PUBLIC_URL: /deepseek-harness-web/
+          VITE_BASE_URL: /deepseek-harness-web/
         run: |
           pnpm run build
-          pnpm dsh web
+          # Build the web app workspace specifically for production static hosting
+          pnpm --filter @deepseek-ai/dsh-web build || pnpm --filter web build || pnpm run build:web
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
-      - name: Upload artifact
+      - name: Locate & Upload Static Artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: './apps/web/dist' # or './dist' depending on pnpm workspace output location
+          # Targets the web app dist directory inside the monorepo workspace
+          path: './apps/web/dist'
 
       - name: Deploy to GitHub Pages
         id: deployment
