@@ -36,14 +36,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
-      - name: Build monorepo libraries & web app
+      - name: Build monorepo with base URL subpath
         env:
           BASE_URL: /deepseek-harness-web/
+          PUBLIC_URL: /deepseek-harness-web/
           VITE_BASE_URL: /deepseek-harness-web/
         run: |
           pnpm run build
-          # Build the web app workspace specifically for production static hosting
-          pnpm --filter @deepseek-ai/dsh-web build || pnpm --filter web build || pnpm run build:web
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -51,7 +50,6 @@ jobs:
       - name: Locate & Upload Static Artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Targets the web app dist directory inside the monorepo workspace
           path: './apps/web/dist'
 
       - name: Deploy to GitHub Pages
