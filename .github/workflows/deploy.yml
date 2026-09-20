@@ -5,13 +5,11 @@ on:
     branches:
       - main  # Change to 'master' if your default branch is master
 
-# Grant GITHUB_TOKEN the required permissions to deploy to GitHub Pages
 permissions:
   contents: read
   pages: write
   id-token: write
 
-# Allow only one concurrent deployment
 concurrency:
   group: 'pages'
   cancel-in-progress: true
@@ -21,8 +19,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      # Step removed: actions/checkout was leaving files in '.'
 
       - name: Clone DeepSeek Harness
         run: |
@@ -43,7 +40,6 @@ jobs:
 
       - name: Build project for GitHub Pages
         env:
-          # Sets base path so asset routes resolve to /deepseek-harness-web/ instead of /
           BASE_URL: /deepseek-harness-web/
           PUBLIC_URL: /deepseek-harness-web/
         run: |
@@ -56,8 +52,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Adjust path if 'pnpm dsh web' outputs to a folder other than 'dist' (e.g., 'build' or 'out')
-          path: './dist'
+          path: './dist' # Update if build output folder is different (e.g. 'build' or 'out')
 
       - name: Deploy to GitHub Pages
         id: deployment
