@@ -39,8 +39,17 @@ jobs:
       - name: Install Dependencies
         run: pnpm install --no-frozen-lockfile
 
-      - name: Build Web Project
-        run: pnpm build
+      - name: Build Internal Dependencies First
+        run: |
+          # 1. Build the specific required client packages first so Vite can resolve them
+          pnpm --filter "@deepseek-ai/dsh-client-web..." build --if-present --
+
+      - name: Build Web Application
+        env:
+          GITHUB_PAGES: "true"
+        run: |
+          # 2. Build the web app once client libraries exist
+          pnpm --filter @deepseek-ai/dsh-web-frontend build
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -48,7 +57,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: './dist'
+          path: './apps/web/dist'
 
       - name: Deploy to GitHub Pages
         id: deployment
