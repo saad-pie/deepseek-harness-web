@@ -19,8 +19,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Step removed: actions/checkout was leaving files in '.'
-
       - name: Clone DeepSeek Harness
         run: |
           git clone https://github.com/deepseek-ai/deepseek-harness.git .
@@ -28,7 +26,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v3
@@ -36,7 +34,7 @@ jobs:
           version: 9
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --no-frozen-lockfile
 
       - name: Build project for GitHub Pages
         env:
@@ -52,7 +50,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: './dist' # Update if build output folder is different (e.g. 'build' or 'out')
+          path: './apps/web/dist' # or './dist' depending on pnpm workspace output location
 
       - name: Deploy to GitHub Pages
         id: deployment
