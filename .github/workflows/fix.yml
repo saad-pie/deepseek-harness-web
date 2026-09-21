@@ -1,13 +1,13 @@
-name: Quick Fix Debug Diagnostic
+name: Fast Fix & Test Harness
 
 on:
-  workflow_dispatch: # Allows instant manual trigger from GitHub Actions tab
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  inspect:
+  test-build-fix:
     runs-on: ubuntu-latest
 
     steps:
@@ -15,24 +15,37 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/deepseek-ai/deepseek-harness.git .
 
-      - name: Locate ModuleLoader Definition
-        run: |
-          echo "=== SEARCHING FOR __ModuleLoader__ IN SOURCE CODE ==="
-          grep -rn "window\.__ModuleLoader__" . --exclude-dir={node_modules,.git,dist} || true
-          grep -rn "ModuleLoader" . --exclude-dir={node_modules,.git,dist} | head -n 30 || true
+      - name: Setup Node.js & pnpm
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
 
-      - name: Inspect Package Scripts & Web App Setup
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build web bundle only
+        env:
+          BASE_URL: /deepseek-harness-web/
+          PUBLIC_URL: /deepseek-harness-web/
+          VITE_BASE_URL: /deepseek-harness-web/
         run: |
-          echo "=== ROOT package.json SCRIPTS ==="
-          node -e "console.log(JSON.stringify(require('./package.json').scripts, null, 2))"
+          pnpm run build
+          pnpm run build:lib:client
+          pnpm --filter @deepseek-ai/dsh-web run build || pnpm --filter web run build
+
+      - name: Test & Print Client Dist / Plugin Bundle Output
+        run: |
+          echo "=== DIST FILES GENERATED ==="
+          ls -la ./apps/web/dist
+
+          echo "=== SEARCHING FOR MODULE LOADER CALLS IN COMPILED JS ==="
+          grep -rn "__ModuleLoader__" ./apps/web/dist/assets/ || true
           
-          echo "=== APPS/WEB package.json SCRIPTS ==="
-          if [ -f "./apps/web/package.json" ]; then
-            node -e "console.log(JSON.stringify(require('./apps/web/package.json').scripts, null, 2))"
-          fi
-
-      - name: Search Plugin Initialization Structure
-        run: |
-          echo "=== SEARCHING FOR PLUGIN LOADING / CREATE LOGIC ==="
-          grep -rn "create(" apps/web/ --exclude-dir={node_modules,.git,dist} | head -n 20 || true
-          grep -rn "\.plugins" apps/web/ --exclude-dir={node_modules,.git,dist} | head -n 20 || true
+          echo "=== CHECKING PACKAGES DIST STRUCTURE ==="
+          ls -la packages/*/dist || true
+          
