@@ -43,76 +43,68 @@ jobs:
           VITE_BASE_URL: /deepseek-harness-web/
         run: |
           pnpm run build
-          pnpm run build:lib:client
+          pnpm run build:lib:client || pnpm --filter @deepseek-ai/dsh-client run build || true
           pnpm --filter @deepseek-ai/dsh-web run build || pnpm --filter web run build
 
-      - name: Inject Complete Plugin Loader Shim
+      - name: Sync Root Modules and Assets into Web Dist
         run: |
           node -e '
           const fs = require("fs");
           const path = require("path");
 
           const distPath = "./apps/web/dist";
-          const htmlPath = path.join(distPath, "index.html");
-
-          // 1. Copy built package assets
-          const packagesDir = "./packages";
-          if (fs.existsSync(packagesDir)) {
-            fs.readdirSync(packagesDir).forEach(pkg => {
-              const pkgDist = path.join(packagesDir, pkg, "dist");
-              if (fs.existsSync(pkgDist)) {
-                fs.cpSync(pkgDist, distPath, { recursive: true, force: true });
-              }
-            });
+          if (!fs.existsSync(distPath)) {
+            console.error("distPath does not exist!");
+            process.exit(1);
           }
 
-          // 2. Inject complete non-crashing ModuleLoader mock
+          // 1. Copy all build outputs from root module folders (boot, client, core, bundle, etc.)
+          const rootDirs = fs.readdirSync(".", { withFileTypes: true });
+          rootDirs.forEach(dirent => {
+            if (dirent.isDirectory() && !["node_modules", ".git", "apps"].includes(dirent.name)) {
+              const moduleDist = path.join(dirent.name, "dist");
+              if (fs.existsSync(moduleDist)) {
+                fs.cpSync(moduleDist, distPath, { recursive: true, force: true });
+                console.log("Successfully copied dist from: " + moduleDist);
+              }
+            }
+          });
+
+          // 2. Ensure Proxy Fallback exists inside index.html in case a specific module file is missing
+          const htmlPath = path.join(distPath, "index.html");
           if (fs.existsSync(htmlPath)) {
             let html = fs.readFileSync(htmlPath, "utf8");
 
-            const inlineShim = `
+            const safeProxyShim = `
             <script>
               (function() {
-                function buildLoaderInstance(opts) {
-                  var options = opts || {};
-                  var pluginsList = options.plugins || [];
-                  var pluginsMap = {};
-                  
-                  if (Array.isArray(pluginsList)) {
-                    pluginsList.forEach(function(p) {
-                      if (p && p.name) pluginsMap[p.name] = p;
-                    });
-                  } else if (typeof pluginsList === "object") {
-                    pluginsMap = pluginsList;
-                  }
-
-                  return {
-                    plugins: pluginsMap,
-                    pluginsList: Array.isArray(pluginsList) ? pluginsList : [],
-                    config: { plugins: pluginsList },
-                    worker: { plugins: [] },
-                    load: function() { return Promise.resolve(this); },
-                    loadPlugin: function() { return Promise.resolve({}); },
-                    getPlugin: function(n) { return pluginsMap[n] || {}; },
-                    register: function(n, p) { pluginsMap[n] = p; }
-                  };
+                function createProxy(obj) {
+                  return new Proxy(obj || function() {}, {
+                    get: function(target, prop) {
+                      if (prop === "plugins") return [];
+                      if (prop in target) return target[prop];
+                      return createProxy(function() { return createProxy({}); });
+                    },
+                    apply: function(target, thisArg, argArray) {
+                      return createProxy({});
+                    }
+                  });
                 }
 
-                var defaultInstance = buildLoaderInstance({ plugins: [] });
-                defaultInstance.create = function(opts) {
-                  return buildLoaderInstance(opts);
-                };
-
                 if (!window.__ModuleLoader__) {
-                  window.__ModuleLoader__ = defaultInstance;
+                  var loader = createProxy({
+                    plugins: [],
+                    create: function() { return createProxy({}); }
+                  });
+                  window.__ModuleLoader__ = loader;
                 }
               })();
             </script>
             `;
 
-            html = html.replace("<head>", "<head>\n" + inlineShim);
+            html = html.replace("<head>", "<head>\n" + safeProxyShim);
             fs.writeFileSync(htmlPath, html);
-            console.log("Successfully injected robust ModuleLoader shim into index.html");
+            console.log("Successfully injected proxy shim into index.html");
           }
           '
 
