@@ -1,4 +1,4 @@
-name: Quick Fix Debug Diagnostic
+name: Fast Search Diagnostic
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ permissions:
   contents: read
 
 jobs:
-  test-build-and-patch:
+  search-source:
     runs-on: ubuntu-latest
 
     steps:
@@ -15,82 +15,20 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/deepseek-ai/deepseek-harness.git .
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9
-
-      - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
-
-      - name: Run Monorepo & Web Build
-        env:
-          BASE_URL: /deepseek-harness-web/
-          PUBLIC_URL: /deepseek-harness-web/
-          VITE_BASE_URL: /deepseek-harness-web/
+      - name: Search for __ModuleLoader__ assignment and usage
         run: |
-          pnpm run build
-          pnpm run build:lib:client
-          pnpm --filter @deepseek-ai/dsh-web run build || pnpm --filter web run build
+          echo "=== WHERE IS __ModuleLoader__ SET OR CALLED? ==="
+          grep -rn "ModuleLoader" . --exclude-dir={node_modules,.git,dist} || true
 
-      - name: Inspect Built Dist HTML & Bundled JS Entry
+      - name: Search exact line where .plugins is accessed
         run: |
-          echo "=== DIST FILE LIST ==="
-          ls -la apps/web/dist
+          echo "=== ALL PURCHASES / ACCESSED .plugins PROPERTIES ==="
+          grep -rn "\.plugins" apps/ --exclude-dir={node_modules,.git,dist} || true
+          grep -rn "\.plugins" packages/ --exclude-dir={node_modules,.git,dist} || true
 
-          echo "=== SEARCHING FOR 'plugins' PROPERTY ACCESS IN BUNDLE ==="
-          grep -rn "\.plugins" apps/web/dist/assets/ || true
-
-      - name: Apply & Test Robust Shim Patch
+      - name: Inspect Package Exports
         run: |
-          node -e '
-          const fs = require("fs");
-          const path = require("path");
-
-          const distPath = "./apps/web/dist";
-          const htmlPath = path.join(distPath, "index.html");
-
-          if (fs.existsSync(htmlPath)) {
-            let html = fs.readFileSync(htmlPath, "utf8");
-
-            // Catch-all proxy object that prevents "Cannot read properties of undefined (reading X)"
-            const inlineShim = `
-            <script>
-              (function() {
-                function createSafeProxy(target) {
-                  return new Proxy(target || function() {}, {
-                    get: function(obj, prop) {
-                      if (prop === "plugins") return [];
-                      if (prop in obj) return obj[prop];
-                      return createSafeProxy(function() {});
-                    },
-                    apply: function(obj, thisArg, argArray) {
-                      return createSafeProxy({});
-                    }
-                  });
-                }
-
-                var safeLoader = createSafeProxy({
-                  plugins: [],
-                  create: function() { return createSafeProxy({}); }
-                });
-
-                if (!window.__ModuleLoader__) {
-                  window.__ModuleLoader__ = safeLoader;
-                }
-              })();
-            </script>
-            `;
-
-            html = html.replace("<head>", "<head>\n" + inlineShim);
-            fs.writeFileSync(htmlPath, html);
-            console.log("=== PATCHED HTML HEAD ===");
-            console.log(html.slice(0, 800));
-          }
-          '
+          echo "=== PACKAGES IN MONOREPO ==="
+          ls -la packages/ || true
+          ls -la apps/ || true
           
