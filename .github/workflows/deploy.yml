@@ -36,16 +36,20 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
-      - name: Build monorepo & web bundle
+      - name: Build Monorepo & Web Application
         env:
           BASE_URL: /deepseek-harness-web/
           PUBLIC_URL: /deepseek-harness-web/
           VITE_BASE_URL: /deepseek-harness-web/
+          NODE_ENV: production
         run: |
+          # 1. Compile all underlying core packages (boot, client, shell, etc.)
           pnpm run build
+
+          # 2. Compile web application
           pnpm --filter @deepseek-ai/dsh-web run build || pnpm --filter web run build
 
-      - name: Link Real Compiled Modules into HTML & Disable Jekyll
+      - name: Sync Production Bundles & Link Real Bootloader
         run: |
           node -e '
           const fs = require("fs");
@@ -55,47 +59,54 @@ jobs:
           const htmlPath = path.join(distPath, "index.html");
 
           if (!fs.existsSync(distPath)) {
-            console.error("Dist folder does not exist!");
+            console.error("apps/web/dist not found!");
             process.exit(1);
           }
 
-          // Create .nojekyll file
+          // Disable GitHub Pages Jekyll processing
           fs.writeFileSync(path.join(distPath, ".nojekyll"), "");
-          console.log("Created .nojekyll in " + distPath);
 
-          // Copy real compiled dist folders from root packages into apps/web/dist
-          const rootDirs = fs.readdirSync(".", { withFileTypes: true });
-          const jsFilesToInject = [];
+          // 1. Sync all compiled dist output directories from root module packages into web dist
+          const rootEntries = fs.readdirSync(".", { withFileTypes: true });
+          const bootScripts = [];
 
-          rootDirs.forEach(dirent => {
-            if (dirent.isDirectory() && !["node_modules", ".git", "apps"].includes(dirent.name)) {
-              const moduleDist = path.join(dirent.name, "dist");
+          rootEntries.forEach(entry => {
+            if (entry.isDirectory() && !["node_modules", ".git", "apps"].includes(entry.name)) {
+              const moduleDist = path.join(entry.name, "dist");
               if (fs.existsSync(moduleDist)) {
                 fs.cpSync(moduleDist, distPath, { recursive: true, force: true });
                 
-                const distFiles = fs.readdirSync(moduleDist);
-                distFiles.forEach(f => {
-                  if (f.endsWith(".js")) {
-                    jsFilesToInject.push(f);
+                // Track real compiled entry scripts from boot/client
+                const files = fs.readdirSync(moduleDist);
+                files.forEach(f => {
+                  if (f.endsWith(".js") && (f.includes("boot") || f.includes("loader") || f.includes("client"))) {
+                    bootScripts.push(f);
                   }
                 });
-                console.log("Copied real package dist from: " + moduleDist);
+                console.log("Synced real module assets from: " + moduleDist);
               }
             }
           });
 
-          // Inject script tags pointing to compiled bootstrap scripts
+          // 2. Inject real compiled script tags synchronously in <head>
           if (fs.existsSync(htmlPath)) {
             let html = fs.readFileSync(htmlPath, "utf8");
 
-            let realScriptTags = "";
-            jsFilesToInject.forEach(file => {
-              realScriptTags += `<script src="/deepseek-harness-web/${file}"></script>\n`;
+            // Deduplicate and prioritize primary bootloader script
+            const uniqueBootScripts = Array.from(new Set(bootScripts)).sort((a, b) => {
+              if (a.includes("boot") || a.includes("loader")) return -1;
+              return 1;
             });
 
-            html = html.replace("<head>", "<head>\n" + realScriptTags);
+            let realTags = "";
+            uniqueBootScripts.forEach(script => {
+              realTags += `<script src="/deepseek-harness-web/${script}"></script>\n`;
+            });
+
+            // Inject BEFORE any Vite module script executes
+            html = html.replace("<head>", "<head>\n" + realTags);
             fs.writeFileSync(htmlPath, html);
-            console.log("Injected script tags:", jsFilesToInject);
+            console.log("Linked real production boot script tags:", uniqueBootScripts);
           }
           '
 
