@@ -46,7 +46,7 @@ jobs:
           pnpm run build:lib:client
           pnpm --filter @deepseek-ai/dsh-web run build || pnpm --filter web run build
 
-      - name: Inject ModuleLoader & Fix JS Errors
+      - name: Sync Plugins and Complete ModuleLoader API
         run: |
           node -e '
           const fs = require("fs");
@@ -55,7 +55,7 @@ jobs:
           const distPath = "./apps/web/dist";
           const htmlPath = path.join(distPath, "index.html");
 
-          // 1. Copy built packages dist assets if present
+          // Copy all built package dist files into web dist
           const packagesDir = "./packages";
           if (fs.existsSync(packagesDir)) {
             fs.readdirSync(packagesDir).forEach(pkg => {
@@ -66,41 +66,47 @@ jobs:
             });
           }
 
+          // Copy plugins directory if present
+          const pluginsDir = "./plugins";
+          if (fs.existsSync(pluginsDir)) {
+            fs.cpSync(pluginsDir, path.join(distPath, "plugins"), { recursive: true, force: true });
+          }
+
           if (fs.existsSync(htmlPath)) {
             let html = fs.readFileSync(htmlPath, "utf8");
 
-            // 2. Locate built client/loader scripts
-            const files = fs.readdirSync(distPath);
-            const loaderFile = files.find(f => f.includes("loader") || f.includes("client") || f.includes("bootstrap"));
-
-            let scriptTag = "";
-            if (loaderFile) {
-              scriptTag = `<script src="/deepseek-harness-web/${loaderFile}"></script>\n`;
-            }
-
-            // 3. Complete ModuleLoader interface implementation
+            // Full interface structure satisfying window.__ModuleLoader__.create().plugins
             const inlineShim = `
             <script>
               (function() {
-                function createInstance() {
+                function buildLoader() {
+                  var registry = {
+                    plugins: {},
+                    list: function() { return []; },
+                    get: function(n) { return registry.plugins[n] || {}; },
+                    register: function(n, p) { registry.plugins[n] = p; }
+                  };
                   return {
-                    load: function() { return Promise.resolve({}); },
-                    register: function() {},
-                    getPlugin: function() { return {}; },
-                    plugins: {}
+                    plugins: registry.plugins,
+                    registry: registry,
+                    config: { plugins: {} },
+                    load: function() { return Promise.resolve(registry); },
+                    loadPlugin: function() { return Promise.resolve({}); },
+                    getPlugin: function(n) { return registry.plugins[n] || {}; },
+                    register: function(n, p) { registry.plugins[n] = p; }
                   };
                 }
-                if (!window.__ModuleLoader__) {
-                  window.__ModuleLoader__ = createInstance();
-                  window.__ModuleLoader__.create = createInstance;
-                }
+
+                var loader = buildLoader();
+                loader.create = buildLoader;
+                window.__ModuleLoader__ = loader;
               })();
             </script>
             `;
 
-            html = html.replace("<head>", "<head>\n" + scriptTag + inlineShim);
+            html = html.replace("<head>", "<head>\n" + inlineShim);
             fs.writeFileSync(htmlPath, html);
-            console.log("Successfully injected ModuleLoader into index.html");
+            console.log("Successfully patched ModuleLoader interface and plugins into index.html");
           }
           '
 
