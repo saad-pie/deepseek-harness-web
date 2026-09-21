@@ -1,0 +1,38 @@
+name: Quick Fix Debug Diagnostic
+
+on:
+  workflow_dispatch: # Allows instant manual trigger from GitHub Actions tab
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clone DeepSeek Harness
+        run: |
+          git clone --depth 1 https://github.com/deepseek-ai/deepseek-harness.git .
+
+      - name: Locate ModuleLoader Definition
+        run: |
+          echo "=== SEARCHING FOR __ModuleLoader__ IN SOURCE CODE ==="
+          grep -rn "window\.__ModuleLoader__" . --exclude-dir={node_modules,.git,dist} || true
+          grep -rn "ModuleLoader" . --exclude-dir={node_modules,.git,dist} | head -n 30 || true
+
+      - name: Inspect Package Scripts & Web App Setup
+        run: |
+          echo "=== ROOT package.json SCRIPTS ==="
+          node -e "console.log(JSON.stringify(require('./package.json').scripts, null, 2))"
+          
+          echo "=== APPS/WEB package.json SCRIPTS ==="
+          if [ -f "./apps/web/package.json" ]; then
+            node -e "console.log(JSON.stringify(require('./apps/web/package.json').scripts, null, 2))"
+          fi
+
+      - name: Search Plugin Initialization Structure
+        run: |
+          echo "=== SEARCHING FOR PLUGIN LOADING / CREATE LOGIC ==="
+          grep -rn "create(" apps/web/ --exclude-dir={node_modules,.git,dist} | head -n 20 || true
+          grep -rn "\.plugins" apps/web/ --exclude-dir={node_modules,.git,dist} | head -n 20 || true
