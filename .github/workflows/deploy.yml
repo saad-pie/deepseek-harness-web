@@ -21,7 +21,7 @@ jobs:
     steps:
       - name: Clone DeepSeek Harness
         run: |
-          git clone https://github.com/deepseek-ai/deepseek-harness.git .
+          git clone --depth 1 https://github.com/deepseek-ai/deepseek-harness.git .
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -42,71 +42,55 @@ jobs:
           PUBLIC_URL: /deepseek-harness-web/
           VITE_BASE_URL: /deepseek-harness-web/
         run: |
+          # 1. Build all base monorepo packages first
           pnpm run build
           pnpm run build:lib:client || pnpm --filter @deepseek-ai/dsh-client run build || true
-          pnpm --filter @deepseek-ai/dsh-web run build || pnpm --filter web run build
 
-      - name: Sync Root Modules and Assets into Web Dist
+          # 2. Build the web app with the subpath base argument
+          pnpm --filter @deepseek-ai/dsh-web run build -- --base=/deepseek-harness-web/ || \
+          pnpm --filter web run build -- --base=/deepseek-harness-web/ || \
+          pnpm --filter ./apps/web run build -- --base=/deepseek-harness-web/
+
+      - name: Determine Output Directory & Sync Root Modules
         run: |
           node -e '
           const fs = require("fs");
           const path = require("path");
 
-          const distPath = "./apps/web/dist";
+          // Locate output dist folder
+          let distPath = "./apps/web/dist";
           if (!fs.existsSync(distPath)) {
-            console.error("distPath does not exist!");
-            process.exit(1);
-          }
-
-          // 1. Copy all build outputs from root module folders (boot, client, core, bundle, etc.)
-          const rootDirs = fs.readdirSync(".", { withFileTypes: true });
-          rootDirs.forEach(dirent => {
-            if (dirent.isDirectory() && !["node_modules", ".git", "apps"].includes(dirent.name)) {
-              const moduleDist = path.join(dirent.name, "dist");
-              if (fs.existsSync(moduleDist)) {
-                fs.cpSync(moduleDist, distPath, { recursive: true, force: true });
-                console.log("Successfully copied dist from: " + moduleDist);
-              }
+            if (fs.existsSync("./packages/web/dist")) distPath = "./packages/web/dist";
+            else if (fs.existsSync("./dist")) distPath = "./dist";
+            else {
+              console.error("No valid dist directory found!");
+              process.exit(1);
             }
-          });
-
-          // 2. Ensure Proxy Fallback exists inside index.html in case a specific module file is missing
-          const htmlPath = path.join(distPath, "index.html");
-          if (fs.existsSync(htmlPath)) {
-            let html = fs.readFileSync(htmlPath, "utf8");
-
-            const safeProxyShim = `
-            <script>
-              (function() {
-                function createProxy(obj) {
-                  return new Proxy(obj || function() {}, {
-                    get: function(target, prop) {
-                      if (prop === "plugins") return [];
-                      if (prop in target) return target[prop];
-                      return createProxy(function() { return createProxy({}); });
-                    },
-                    apply: function(target, thisArg, argArray) {
-                      return createProxy({});
-                    }
-                  });
-                }
-
-                if (!window.__ModuleLoader__) {
-                  var loader = createProxy({
-                    plugins: [],
-                    create: function() { return createProxy({}); }
-                  });
-                  window.__ModuleLoader__ = loader;
-                }
-              })();
-            </script>
-            `;
-
-            html = html.replace("<head>", "<head>\n" + safeProxyShim);
-            fs.writeFileSync(htmlPath, html);
-            console.log("Successfully injected proxy shim into index.html");
           }
+
+          console.log("Target build path: " + distPath);
+          fs.writeFileSync(process.env.GITHUB_ENV, "DIST_PATH=" + distPath + "\n", { flag: "a" });
+
+          // Copy built outputs from root/sibling modules (packages/apps) into target dist
+          const searchDirs = [".", "packages", "apps"];
+          searchDirs.forEach(parent => {
+            if (!fs.existsSync(parent)) return;
+            const entries = fs.readdirSync(parent, { withFileTypes: true });
+            entries.forEach(dirent => {
+              if (dirent.isDirectory() && !["node_modules", ".git"].includes(dirent.name)) {
+                const moduleDist = path.join(parent, dirent.name, "dist");
+                if (fs.existsSync(moduleDist) && path.resolve(moduleDist) !== path.resolve(distPath)) {
+                  fs.cpSync(moduleDist, distPath, { recursive: true, force: true });
+                  console.log("Successfully copied dist from: " + moduleDist);
+                }
+              }
+            });
+          });
           '
+
+      - name: Disable Jekyll Engine
+        run: |
+          touch ${{ env.DIST_PATH }}/.nojekyll
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -114,7 +98,7 @@ jobs:
       - name: Upload Pages Artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: './apps/web/dist'
+          path: ${{ env.DIST_PATH }}
 
       - name: Deploy to GitHub Pages
         id: deployment
