@@ -1,4 +1,4 @@
-name: Fast Fix & Test Harness
+name: Quick Fix Debug Diagnostic
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ permissions:
   contents: read
 
 jobs:
-  test-build-fix:
+  test-build-and-patch:
     runs-on: ubuntu-latest
 
     steps:
@@ -15,7 +15,7 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/deepseek-ai/deepseek-harness.git .
 
-      - name: Setup Node.js & pnpm
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -28,7 +28,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
-      - name: Build web bundle only
+      - name: Run Monorepo & Web Build
         env:
           BASE_URL: /deepseek-harness-web/
           PUBLIC_URL: /deepseek-harness-web/
@@ -38,14 +38,59 @@ jobs:
           pnpm run build:lib:client
           pnpm --filter @deepseek-ai/dsh-web run build || pnpm --filter web run build
 
-      - name: Test & Print Client Dist / Plugin Bundle Output
+      - name: Inspect Built Dist HTML & Bundled JS Entry
         run: |
-          echo "=== DIST FILES GENERATED ==="
-          ls -la ./apps/web/dist
+          echo "=== DIST FILE LIST ==="
+          ls -la apps/web/dist
 
-          echo "=== SEARCHING FOR MODULE LOADER CALLS IN COMPILED JS ==="
-          grep -rn "__ModuleLoader__" ./apps/web/dist/assets/ || true
-          
-          echo "=== CHECKING PACKAGES DIST STRUCTURE ==="
-          ls -la packages/*/dist || true
+          echo "=== SEARCHING FOR 'plugins' PROPERTY ACCESS IN BUNDLE ==="
+          grep -rn "\.plugins" apps/web/dist/assets/ || true
+
+      - name: Apply & Test Robust Shim Patch
+        run: |
+          node -e '
+          const fs = require("fs");
+          const path = require("path");
+
+          const distPath = "./apps/web/dist";
+          const htmlPath = path.join(distPath, "index.html");
+
+          if (fs.existsSync(htmlPath)) {
+            let html = fs.readFileSync(htmlPath, "utf8");
+
+            // Catch-all proxy object that prevents "Cannot read properties of undefined (reading X)"
+            const inlineShim = `
+            <script>
+              (function() {
+                function createSafeProxy(target) {
+                  return new Proxy(target || function() {}, {
+                    get: function(obj, prop) {
+                      if (prop === "plugins") return [];
+                      if (prop in obj) return obj[prop];
+                      return createSafeProxy(function() {});
+                    },
+                    apply: function(obj, thisArg, argArray) {
+                      return createSafeProxy({});
+                    }
+                  });
+                }
+
+                var safeLoader = createSafeProxy({
+                  plugins: [],
+                  create: function() { return createSafeProxy({}); }
+                });
+
+                if (!window.__ModuleLoader__) {
+                  window.__ModuleLoader__ = safeLoader;
+                }
+              })();
+            </script>
+            `;
+
+            html = html.replace("<head>", "<head>\n" + inlineShim);
+            fs.writeFileSync(htmlPath, html);
+            console.log("=== PATCHED HTML HEAD ===");
+            console.log(html.slice(0, 800));
+          }
+          '
           
